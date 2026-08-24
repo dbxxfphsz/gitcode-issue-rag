@@ -26,12 +26,14 @@ When the user wants to check if an issue has similar historical problems:
 **Step 1**: Get the issue title and body from the user.
 
 **Step 2**: Run the scan script:
+
 ```bash
 cd /Users/zhumingzhu/work/gitcode-issue-rag
 python -m scripts.scan_issue --title "ISSUE_TITLE" --body "ISSUE_BODY" --top-k 5
 ```
 
 **Step 3**: Read the output report and present it to the user. The report contains:
+
 - Similar knowledge entries ranked by similarity score
 - Each entry includes: title, category, problem description, solution, related issue URLs
 
@@ -42,6 +44,7 @@ python -m scripts.scan_issue --title "ISSUE_TITLE" --body "ISSUE_BODY" --top-k 5
 When the user wants to add an issue to the knowledge base:
 
 **Step 1**: Collect issue details from the user:
+
 - Issue ID (e.g., "#123")
 - Title
 - Body (optional but recommended)
@@ -49,6 +52,7 @@ When the user wants to add an issue to the knowledge base:
 - Labels (optional, comma-separated)
 
 **Step 2**: Run the add script:
+
 ```bash
 cd /Users/zhumingzhu/work/gitcode-issue-rag
 python -m scripts.add_issue \
@@ -66,17 +70,20 @@ python -m scripts.add_issue \
 When the user wants to build the knowledge base from all cached issues (first-time setup):
 
 **Step 1**: Ensure issue data is cached:
+
 ```bash
 cd /Users/zhumingzhu/work/gitcode-issue-rag
 python -m scripts.init_ingest
 ```
 
 **Step 2**: Build the knowledge base (extracts knowledge from Bug/Usage issues):
+
 ```bash
 python -m scripts.build_kb
 ```
 
 Or limit the number of issues to process:
+
 ```bash
 python -m scripts.build_kb --max-issues 20
 ```
@@ -86,6 +93,7 @@ python -m scripts.build_kb --max-issues 20
 ### 4. Check Knowledge Base Stats (查看统计)
 
 To check the current knowledge base size, start the API server and query:
+
 ```bash
 curl http://localhost:8000/api/stats
 ```

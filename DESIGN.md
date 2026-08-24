@@ -120,6 +120,7 @@ class KnowledgeEntry(BaseModel):
 ```
 
 知识条目与原始 Issue 的区别：
+
 - **Issue** 是原始用户反馈，可能冗长、格式混乱
 - **KnowledgeEntry** 是 LLM 提炼后的结构化知识，聚焦于「问题 + 解决方案」
 
@@ -138,30 +139,32 @@ class KnowledgeEntry(BaseModel):
 ### 3.4 Issue 筛选策略 (build_kb.py)
 
 优先使用标签匹配：
+
 ```python
 KB_LABELS = {"bug", "usage", "缺陷", "使用", "问题", "question", "error", "故障"}
 ```
 
 标签不匹配时，使用标题关键词兜底：
+
 ```python
 ["报错", "错误", "失败", "无法", "怎么", "如何", "问题", "异常", "crash", "error", "fail"]
 ```
 
 ## 4. 脚本接口
 
-| 脚本 | 用途 | 关键参数 |
-|------|------|----------|
-| `scripts/init_ingest.py` | 全量爬取 issue 到缓存 | `--fresh`, `--crawl-only`, `--embed-only` |
-| `scripts/build_kb.py` | 从缓存构建知识库 | `--max-issues N` |
-| `scripts/scan_issue.py` | 扫描 issue 找相似问题 | `--title`, `--body`, `--top-k` |
-| `scripts/add_issue.py` | 添加单条 issue 到知识库 | `--issue-id`, `--title`, `--body`, `--url`, `--labels` |
+| 脚本                     | 用途                    | 关键参数                                               |
+| ------------------------ | ----------------------- | ------------------------------------------------------ |
+| `scripts/init_ingest.py` | 全量爬取 issue 到缓存   | `--fresh`, `--crawl-only`, `--embed-only`              |
+| `scripts/build_kb.py`    | 从缓存构建知识库        | `--max-issues N`                                       |
+| `scripts/scan_issue.py`  | 扫描 issue 找相似问题   | `--title`, `--body`, `--top-k`                         |
+| `scripts/add_issue.py`   | 添加单条 issue 到知识库 | `--issue-id`, `--title`, `--body`, `--url`, `--labels` |
 
 ## 5. 定时任务
 
-| 任务 | 频率 | 时间 | 说明 |
-|------|------|------|------|
-| 每日增量爬取 | 每天 | 02:00 | 爬取当天更新的 issue |
-| 知识库整合 | 每月 | 1 号 03:00 | 合并相似知识条目 |
+| 任务         | 频率 | 时间       | 说明                 |
+| ------------ | ---- | ---------- | -------------------- |
+| 每日增量爬取 | 每天 | 02:00      | 爬取当天更新的 issue |
+| 知识库整合   | 每月 | 1 号 03:00 | 合并相似知识条目     |
 
 ## 6. 配置项
 
@@ -174,13 +177,13 @@ CONSOLIDATION_SIMILARITY_THRESHOLD=0.90
 
 ## 7. 验收标准对照
 
-| 验收标准 | 实现方式 | 状态 |
-|----------|----------|------|
-| 从 Usage/Bug 类 Issue 自动提取知识 | `build_kb.py` + 标签筛选 + LLM 提取 | ✅ |
-| 首次至少新增 5 个知识 | LLM 逐条提取，只要缓存中有 5+ 条 bug/usage issue 即可 | ✅ |
-| 每月自动整理合并 | `scheduler.py` 月度任务 + `consolidation.py` | ✅ |
-| 新 issue 自动搜索回复 | `scan_issue.py` 语义搜索 + 报告生成 | ✅ |
-| Agent 可直接使用 | `SKILL.md` 定义完整操作流程 | ✅ |
+| 验收标准                           | 实现方式                                              | 状态 |
+| ---------------------------------- | ----------------------------------------------------- | ---- |
+| 从 Usage/Bug 类 Issue 自动提取知识 | `build_kb.py` + 标签筛选 + LLM 提取                   | ✅   |
+| 首次至少新增 5 个知识              | LLM 逐条提取，只要缓存中有 5+ 条 bug/usage issue 即可 | ✅   |
+| 每月自动整理合并                   | `scheduler.py` 月度任务 + `consolidation.py`          | ✅   |
+| 新 issue 自动搜索回复              | `scan_issue.py` 语义搜索 + 报告生成                   | ✅   |
+| Agent 可直接使用                   | `SKILL.md` 定义完整操作流程                           | ✅   |
 
 ## 8. 目录结构（变更后）
 
