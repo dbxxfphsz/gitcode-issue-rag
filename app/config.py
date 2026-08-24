@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     dedup_similarity_threshold: float = 0.85
     dedup_top_k: int = 3
 
+    # --- 知识库整合 ---
+    consolidation_similarity_threshold: float = 0.90
+
     # --- 定时任务 ---
     cron_hour: int = 2
     cron_minute: int = 0
