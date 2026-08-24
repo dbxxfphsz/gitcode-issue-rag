@@ -1,0 +1,47 @@
+[project]
+name = "gitcode-issue-rag"
+version = "0.1.0"
+description = "GitCode Issue 查重 RAG 系统 - 基于 LangChain"
+requires-python = ">=3.10"
+
+dependencies = [
+    # LLM & RAG
+    "langchain>=0.3",
+    "langchain-openai>=0.3",
+    "langchain-community>=0.3",
+    "langchain-text-splitters>=0.3",
+    "langchain-chroma>=0.2",
+    "chromadb>=0.5",
+
+    # Web 框架
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+
+    # 爬虫
+    "httpx>=0.28",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.3",
+
+    # 定时任务
+    "apscheduler>=3.10",
+
+    # 工具
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "python-dotenv>=1.0",
+    "loguru>=0.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.8",
+    "pytest>=8.0",
+    "httpx",  # 用于 FastAPI TestClient
+]
+
+[tool.setuptools]
+packages = ["app", "app.crawler", "app.ingestion", "app.api", "app.shared"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
