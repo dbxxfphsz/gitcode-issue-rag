@@ -1,132 +1,179 @@
-# Issue Knowledge Base Skill
+# Issue 相似性分析 Skill
 
-Scan issues for similar historical problems, manage a searchable knowledge base built from GitCode issues, and generate diagnostic reports.
+提供 Issue 知识库管理、相似问题检索、扫描报告生成、GitCode 评论发布和 FAQ 文档生成能力。Agent 通过自然语言指令直接调用。
 
-## When to Use
+## 触发条件
 
-- User says "扫描这个 issue"、"检查是否有类似问题"、"查一下有没有类似的"
-- User says "把这个 issue 加入知识库"、"记录这个问题"
-- User says "构建知识库"、"初始化知识库"
-- User provides an issue title/body and asks to find similar issues
+- "扫描这个 Issue，看看是否有类似问题"
+- "把这个 Issue 加入知识库"
+- "每天定时扫描新 Issue，并评论相似问题"
+- "基于历史 Issue 生成 FAQ 文档"
+- "查看知识库状态"
 
-## Prerequisites
+## 前置条件
 
-This skill requires the project to be set up:
+1. `.env` 已配置（API Key、GitCode Token）
+2. 依赖已安装：`pip install -e .`
+3. 知识库已构建：`python -m scripts.build_kb`
 
-1. `.env` configured with valid `OPENAI_API_KEY` and `OPENAI_API_BASE`
-2. Dependencies installed: `pip install -e .`
-3. Issue data cached: `python -m scripts.init_ingest` (first time only)
+## 操作指南
 
-## Operations
+### 1. 知识库管理
 
-### 1. Scan Issue (扫描 Issue)
-
-When the user wants to check if an issue has similar historical problems:
-
-**Step 1**: Get the issue title and body from the user.
-
-**Step 2**: Run the scan script:
+**初始化/重建知识库：**
 
 ```bash
-cd /Users/zhumingzhu/work/gitcode-issue-rag
-python -m scripts.scan_issue --title "ISSUE_TITLE" --body "ISSUE_BODY" --top-k 5
+python -m scripts.build_kb              # 全量构建
+python -m scripts.build_kb --fresh       # 清空后重建
+python -m scripts.build_kb --incremental # 增量更新
 ```
 
-**Step 3**: Read the output report and present it to the user. The report contains:
-
-- Similar knowledge entries ranked by similarity score
-- Each entry includes: title, category, problem description, solution, related issue URLs
-
-**Step 4**: If similar issues are found (score > 0.8), summarize the known solutions and reference the original issue URLs. If no similar issues found, tell the user this appears to be a new problem.
-
-### 2. Add Issue to Knowledge Base (加入知识库)
-
-When the user wants to add an issue to the knowledge base:
-
-**Step 1**: Collect issue details from the user:
-
-- Issue ID (e.g., "#123")
-- Title
-- Body (optional but recommended)
-- URL (optional)
-- Labels (optional, comma-separated)
-
-**Step 2**: Run the add script:
+**同步最新 Issue：**
 
 ```bash
-cd /Users/zhumingzhu/work/gitcode-issue-rag
-python -m scripts.add_issue \
-    --issue-id "#123" \
-    --title "ISSUE_TITLE" \
-    --body "ISSUE_BODY" \
-    --url "ISSUE_URL" \
-    --labels "bug,usage"
+python -m scripts.build_kb --incremental
 ```
 
-**Step 3**: Confirm to the user that the issue has been added and knowledge has been extracted.
-
-### 3. Build Knowledge Base (构建知识库)
-
-When the user wants to build the knowledge base from all cached issues (first-time setup):
-
-**Step 1**: Ensure issue data is cached:
+**查看状态：**
 
 ```bash
-cd /Users/zhumingzhu/work/gitcode-issue-rag
-python -m scripts.init_ingest
+python -m scripts.kb_manage status
 ```
 
-**Step 2**: Build the knowledge base (extracts knowledge from Bug/Usage issues):
+**删除/重建索引：**
 
 ```bash
-python -m scripts.build_kb
+python -m scripts.kb_manage delete 123   # 删除指定 Issue
+python -m scripts.kb_manage reindex      # 重建 embedding 索引
+python -m scripts.kb_manage rebuild      # 清空知识库
 ```
 
-Or limit the number of issues to process:
+### 2. 相似问题扫描
+
+**扫描指定 Issue：**
 
 ```bash
-python -m scripts.build_kb --max-issues 20
+python -m scripts.scan_issue --issue 123
+python -m scripts.scan_issue --issue 123 --top-k 5
 ```
 
-**Step 3**: Report the number of knowledge entries created and the total knowledge base size.
-
-### 4. Check Knowledge Base Stats (查看统计)
-
-To check the current knowledge base size, start the API server and query:
+**仅生成报告（不评论）：**
 
 ```bash
-curl http://localhost:8000/api/stats
+python -m scripts.scan_issue --issue 123 --mode report
 ```
 
-## Automated Maintenance
+**扫描并评论到 Issue：**
 
-The system includes automated maintenance when the FastAPI server is running (`python -m main`):
-
-- **Daily (02:00)**: Crawls new issues and adds them to the raw data store
-- **Monthly (1st of month, 03:00)**: Consolidates the knowledge base by merging similar entries using LLM
-
-## Output Format
-
-When presenting scan results to the user, use this format:
-
-```
-## 扫描结果
-
-**Issue**: {title}
-**匹配数**: {count}
-
-### 相似问题 1: {matched_title}
-- **相似度**: {score}
-- **分类**: {category}
-- **问题**: {problem_description}
-- **解决方案**: {solution}
-- **参考 Issue**: {url}
+```bash
+python -m scripts.scan_issue --issue 123 --mode comment
+# 或使用专用脚本
+python -m scripts.comment_issue --issue 123
 ```
 
-## Notes
+**手动输入扫描：**
 
-- Knowledge entries are extracted by LLM from raw issues, so quality depends on the LLM model
-- The knowledge base uses a separate ChromaDB collection from the raw issue store
-- Monthly consolidation merges entries with similarity > 0.90 (configurable in .env)
-- Bug and Usage labeled issues are prioritized for knowledge extraction
-- Title keywords (报错, 错误, 失败, etc.) are also used as fallback for filtering
+```bash
+python -m scripts.scan_issue --title "xxx报错" --body "详细描述"
+```
+
+支持 Issue 编号（`123`）、带#编号（`#123`）和 URL（`https://gitcode.com/.../issues/123`）格式。
+
+### 3. 添加 Issue 到知识库
+
+**从 GitCode 拉取：**
+
+```bash
+python -m scripts.add_issue --issue 123
+python -m scripts.add_issue --issue 123 --with-comments
+```
+
+**手动添加：**
+
+```bash
+python -m scripts.add_issue --manual --title "xxx" --body "xxx" --labels "bug,安装"
+```
+
+已存在的 Issue 会自动更新（标题、正文、状态、评论、解决方案）。
+
+### 4. 定时扫描新 Issue
+
+**执行增量扫描：**
+
+```bash
+python -m scripts.scan_new                  # 扫描新 Issue（仅报告）
+python -m scripts.scan_new --mode comment   # 扫描并评论
+python -m scripts.scan_new --status         # 查看运行状态
+```
+
+扫描游标和已处理 Issue 列表保存在知识库元数据中，支持断点续跑，不会重复评论。单个 Issue 处理失败不影响其他 Issue。
+
+Agent 可通过系统 cron 或其他方式创建定时任务来定期执行此脚本。
+
+### 5. FAQ 生成
+
+**全量生成：**
+
+```bash
+python -m scripts.generate_faq
+```
+
+**按分类生成：**
+
+```bash
+python -m scripts.generate_faq --category 安装
+python -m scripts.generate_faq --category Timeline
+```
+
+**为指定 Issue 生成单条 FAQ：**
+
+```bash
+python -m scripts.generate_faq --issue 123
+```
+
+**增量更新 / 正式版：**
+
+```bash
+python -m scripts.generate_faq --incremental
+python -m scripts.generate_faq --no-draft    # 生成正式版（非草稿）
+```
+
+FAQ 以 Markdown 格式保存到 `docs/faq/` 目录。默认生成草稿（文件名含 `_draft`），维护者确认后去掉 `_draft` 后缀发布。
+
+## 配置项
+
+所有配置通过 `.env` 文件管理：
+
+| 配置                   | 默认值                 | 说明                       |
+| ---------------------- | ---------------------- | -------------------------- |
+| `GITCODE_TOKEN`        | (空)                   | GitCode API Token          |
+| `GITCODE_REPO`         | Ascend/msinsight       | 仓库地址                   |
+| `SIMILARITY_THRESHOLD` | 0.75                   | 相似度阈值                 |
+| `SCAN_TOP_K`           | 5                      | 返回相似 Issue 数量        |
+| `SCAN_MODE`            | report                 | 默认模式: report / comment |
+| `INCLUDE_CLOSED`       | true                   | 是否检索已关闭 Issue       |
+| `INCLUDE_COMMENTS`     | true                   | 是否包含评论内容           |
+| `IGNORE_LABELS`        | (空)                   | 忽略的标签，逗号分隔       |
+| `KB_DIR`               | ./issue-knowledge-base | 知识库目录                 |
+| `FAQ_DIR`              | ./docs/faq             | FAQ 输出目录               |
+
+## 数据存储
+
+所有数据保存在本地目录，不依赖外部数据库：
+
+```
+issue-knowledge-base/
+├── issues/              # 每条 Issue 一个 JSON 文件
+├── embeddings.json      # Embedding 索引
+├── metadata.json        # 游标、统计、更新时间
+└── reports/             # 扫描报告
+
+docs/faq/                # FAQ 文档
+```
+
+## 注意事项
+
+- 扫描结果仅作为相似问题参考，不直接判定 Issue 重复
+- 评论包含固定标记 `<!-- issue-skill-scan-report:v1 -->`，避免重复发布
+- GitCode Token 通过环境变量配置，不写入代码仓库
+- 单个 Issue 处理失败时记录错误，不影响其他 Issue

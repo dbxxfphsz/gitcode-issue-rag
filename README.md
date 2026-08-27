@@ -1,6 +1,6 @@
-# GitCode Issue RAG
+# Issue 相似性分析 Skill
 
-基于 LangChain + ChromaDB 的 GitCode Issue 查重系统。自动爬取 GitCode 仓库的 issue 建立 RAG 知识库，提供 API 接口判断新 issue 是否已有相同答案。
+基于 GitCode Issue 历史数据的相似性分析工具。无需部署独立服务，通过脚本直接运行。
 
 ## 快速开始
 
@@ -14,56 +14,53 @@ pip install -e .
 
 # 3. 配置环境变量
 cp .env.example .env
-# 编辑 .env，填入你的 API Key
+# 编辑 .env，填入 OPENAI_API_KEY 和 GITCODE_TOKEN
 
-# 4. 首次全量入库（约 1-2 分钟）
-python -m scripts.init_ingest
+# 4. 构建知识库
+python -m scripts.build_kb
 
-# 5. 启动服务
-python -m main
+# 5. 扫描 Issue
+python -m scripts.scan_issue --issue 123
 ```
 
-服务启动后访问 http://localhost:8000/docs 查看 API 文档。
+## 核心功能
 
-## 核心接口
-
-```bash
-# 检查 issue 是否重复
-curl -X POST http://localhost:8000/api/check-duplicate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "title": "Timeline 不支持 MODEL_EXECUTE 跳转",
-    "body": "在多子图场景下，无法定位关联 Stream..."
-  }'
-```
-
-返回示例：
-```json
-{
-  "is_duplicate": true,
-  "duplicate_url": "https://gitcode.com/Ascend/msinsight/issues/500",
-  "similarity": 0.9234,
-  "matched_title": "[Feature]: Timeline 支持 MODEL_EXECUTE 跳转并高亮对应 Stream 泳道"
-}
-```
+| 功能         | 命令                                          | 说明                             |
+| ------------ | --------------------------------------------- | -------------------------------- |
+| 构建知识库   | `python -m scripts.build_kb`                  | 从 GitCode 拉取 Issue 并构建索引 |
+| 扫描 Issue   | `python -m scripts.scan_issue --issue 123`    | 查找相似历史问题                 |
+| 添加到知识库 | `python -m scripts.add_issue --issue 123`     | 保存 Issue 并更新索引            |
+| 评论到 Issue | `python -m scripts.comment_issue --issue 123` | 将报告发布为评论                 |
+| 增量扫描     | `python -m scripts.scan_new`                  | 扫描新增 Issue                   |
+| 生成 FAQ     | `python -m scripts.generate_faq`              | 从已解决 Issue 生成 FAQ          |
+| 管理知识库   | `python -m scripts.kb_manage status`          | 查看状态/删除/重建索引           |
 
 ## 项目结构
 
 ```
-app/
-├── config.py              # 全局配置（读取 .env）
-├── crawler/
-│   ├── gitcode.py         # GitCode API 爬虫
-│   └── scheduler.py       # 每日定时任务
-├── ingestion/
-│   ├── __init__.py        # 入库流水线（分块 + embedding + 写入）
-│   └── dedup.py           # 查重逻辑
-├── api/
-│   └── routes.py          # FastAPI 路由
-└── shared/
-    ├── models.py          # embedding + 向量库工厂
-    └── schemas.py         # Issue 数据模型
-scripts/
-└── init_ingest.py         # 全量入库脚本
-main.py                    # 启动入口
+issue_kb/                    # 核心模块
+├── config.py                # 配置管理
+├── gitcode_client.py        # GitCode API 客户端
+├── knowledge.py             # 文件型知识库管理
+├── similarity.py            # Embedding + 余弦相似度搜索
+├── report.py                # Markdown 报告生成
+├── commenter.py             # GitCode 评论管理
+└── faq.py                   # FAQ 文档生成
+scripts/                     # 可执行脚本
+├── build_kb.py              # 构建知识库
+├── scan_issue.py            # 扫描 Issue
+├── add_issue.py             # 添加 Issue
+├── comment_issue.py         # 评论 Issue
+├── scan_new.py              # 增量扫描新 Issue
+├── generate_faq.py          # 生成 FAQ
+└── kb_manage.py             # 知识库管理
+SKILL.md                     # Agent Skill 详细说明
+DESIGN.md                    # 技术设计文档
+issue-knowledge-base/        # 知识库数据目录（运行后生成）
+docs/faq/                    # FAQ 输出目录
 ```
+
+## 文档
+
+- [SKILL.md](SKILL.md) - Agent Skill 使用说明
+- [DESIGN.md](DESIGN.md) - 技术设计文档

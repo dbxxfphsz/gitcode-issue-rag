@@ -3,8 +3,9 @@
 __pycache__/
 *.pyc
 
-# 向量库数据（太大，不提交）
-data/
+# 知识库数据（运行后生成，不提交）
+issue-knowledge-base/
+docs/faq/
 
 # Python
 *.egg-info/

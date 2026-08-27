@@ -1,13 +1,9 @@
-"""添加 Issue 到知识库 - 提取知识并存入向量库。
+"""添加 Issue 到知识库 - 从 GitCode 拉取或手动输入，保存并更新索引。
 
 用法：
-    cd gitcode-issue-rag
-    python -m scripts.add_issue \\
-        --issue-id "#123" \\
-        --title "xxx报错" \\
-        --body "详细描述" \\
-        --url "https://gitcode.com/xxx/issues/123" \\
-        --labels "bug,usage"
+    python -m scripts.add_issue --issue 123
+    python -m scripts.add_issue --issue 123 --with-comments
+    python -m scripts.add_issue --manual --title "xxx" --body "xxx" --labels "bug"
 """
 
 import argparse
@@ -16,90 +12,98 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from langchain_core.documents import Document
 from loguru import logger
 
-from app.knowledge.knowledge import extract_knowledge
-from app.shared.models import get_vectorstore
-from app.shared.schemas import Issue
+from issue_kb.config import settings
+from issue_kb.gitcode_client import GitCodeClient
+from issue_kb.knowledge import KnowledgeBase, IssueData
+from issue_kb.similarity import SimilarityEngine, _build_issue_text
 
 
-def add_issue_to_kb(
-    issue_id: str,
-    title: str,
-    body: str = "",
-    url: str = "",
-    labels: list[str] | None = None,
-) -> bool:
-    """将一条 Issue 提取为知识并加入知识库。
+def add_from_gitcode(issue_number: int, with_comments: bool = True):
+    """从 GitCode 拉取 Issue 并加入知识库。"""
+    kb = KnowledgeBase()
+    engine = SimilarityEngine(kb.kb_dir)
 
-    Args:
-        issue_id: issue 编号，如 "#123"
-        title: issue 标题
-        body: issue 正文
-        url: issue URL
-        labels: 标签列表
+    existing = kb.get_issue(issue_number)
+    if existing:
+        logger.info(f"#{issue_number} 已存在于知识库中，将更新")
 
-    Returns:
-        是否成功添加
-    """
-    issue = Issue(
-        issue_id=issue_id,
-        title=title,
-        body=body,
-        url=url,
-        labels=labels or [],
-    )
+    with GitCodeClient() as client:
+        raw = client.fetch_issue(issue_number)
+        comments = client.fetch_comments(issue_number) if with_comments else []
 
-    logger.info(f"正在提取知识: {issue_id} - {title}")
-    entry = extract_knowledge(issue)
-    if entry is None:
-        logger.warning(f"无法从 {issue_id} 提取知识")
-        return False
+    data = IssueData.from_gitcode(raw, comments)
+    if not IssueData.validate(data):
+        logger.error(f"#{issue_number} 数据无效")
+        return
 
-    vectorstore = get_vectorstore()
-    doc = Document(
-        page_content=entry.to_document_text(),
-        metadata={
-            "title": entry.title,
-            "category": entry.category,
-            "problem": entry.problem,
-            "solution": entry.solution,
-            "related_issue_ids": ",".join(entry.related_issue_ids),
-            "tags": ",".join(entry.tags),
-            "type": "knowledge_entry",
-            "url": url,
-        },
-    )
-    vectorstore.add_documents([doc])
+    kb.save_issue(data)
+    logger.info(f"已保存 #{issue_number} 到知识库")
 
-    total = vectorstore._collection.count()
-    logger.info(f"已添加到知识库: {entry.title}（知识库总计 {total} 条）")
-    return True
+    # 更新 embedding
+    text = _build_issue_text(data, settings.include_comments)
+    engine.update_embedding(issue_number, text)
+    logger.info(f"embedding 已更新")
+
+    stats = kb.get_stats()
+    logger.info(f"知识库总计: {stats['total']} 条 Issue")
+
+
+def add_manual(title: str, body: str = "", labels: str = "", state: str = "open"):
+    """手动添加 Issue 到知识库。"""
+    kb = KnowledgeBase()
+    engine = SimilarityEngine(kb.kb_dir)
+
+    # 分配编号（取现有最大编号 + 1）
+    all_issues = kb.list_issues()
+    max_num = max((i["number"] for i in all_issues), default=0)
+    number = max_num + 1
+
+    label_list = [lb.strip() for lb in labels.split(",") if lb.strip()] if labels else []
+    data = {
+        "number": number,
+        "title": title,
+        "body": body,
+        "state": state,
+        "url": "",
+        "labels": label_list,
+        "author": "",
+        "created_at": "",
+        "updated_at": "",
+        "closed_at": "",
+        "comments_data": [],
+        "kb_added_at": None,
+        "kb_updated_at": None,
+        "solution": "",
+    }
+
+    kb.save_issue(data)
+    text = _build_issue_text(data, settings.include_comments)
+    engine.update_embedding(number, text)
+    logger.info(f"已添加手动 Issue #{number}: {title}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="添加 Issue 到知识库")
-    parser.add_argument("--issue-id", type=str, required=True, help="Issue ID，如 #123")
-    parser.add_argument("--title", type=str, required=True, help="Issue 标题")
-    parser.add_argument("--body", type=str, default="", help="Issue 正文")
-    parser.add_argument("--url", type=str, default="", help="Issue URL")
+    parser.add_argument("--issue", type=int, help="从 GitCode 拉取 Issue 编号")
+    parser.add_argument("--with-comments", action="store_true", help="同时拉取评论")
+    parser.add_argument("--manual", action="store_true", help="手动输入模式")
+    parser.add_argument("--title", type=str, default="", help="标题（手动模式）")
+    parser.add_argument("--body", type=str, default="", help="正文（手动模式）")
     parser.add_argument("--labels", type=str, default="", help="标签，逗号分隔")
-
+    parser.add_argument("--state", type=str, default="open", help="状态")
     args = parser.parse_args()
-    labels = [label.strip() for label in args.labels.split(",") if label.strip()] if args.labels else []
 
-    success = add_issue_to_kb(
-        issue_id=args.issue_id,
-        title=args.title,
-        body=args.body,
-        url=args.url,
-        labels=labels,
-    )
-    if success:
-        print(f"✓ 已添加到知识库: {args.title}")
+    if args.manual:
+        if not args.title:
+            logger.error("手动模式需要 --title")
+            return
+        add_manual(args.title, args.body, args.labels, args.state)
+    elif args.issue:
+        add_from_gitcode(args.issue, args.with_comments)
     else:
-        print(f"✗ 添加失败: {args.title}")
+        parser.print_help()
 
 
 if __name__ == "__main__":
