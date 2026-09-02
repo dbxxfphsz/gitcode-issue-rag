@@ -82,35 +82,125 @@ class SimilarityEngine:
         idx[key] = vectors[0]
         self._save_index()
 
-    def rebuild_index(self, issues: list[dict], batch_size: int = 10):
-        """从 issue 列表重建 embedding 索引。"""
-        self._index = {}
-        texts = []
-        numbers = []
-        for issue in issues:
-            text = _build_issue_text(issue, settings.include_comments)
-            texts.append(text)
-            numbers.append(str(issue["number"]))
+    def remove_embedding(self, issue_number: int):
+        """移除一条 issue 的 embedding（内容更新后需重算时使用）。"""
+        idx = self._load_index()
+        if idx.pop(str(issue_number), None) is not None:
+            self._save_index()
 
-        total = len(texts)
-        logger.info(f"开始重建 embedding 索引: {total} 条 issue")
+    # ---- 批量构建 ----
 
-        for i in range(0, total, batch_size):
+    def _embed_batches(
+        self, texts: list[str], numbers: list[str], batch_size: int
+    ) -> list[str]:
+        """分批调用 embedding API，每批成功后立即落盘（支持断点续建）。
+
+        Returns:
+            失败批次包含的 issue 编号列表（供记录与重试）
+        """
+        idx = self._load_index()
+        failed: list[str] = []
+        for i in range(0, len(texts), batch_size):
             batch_texts = texts[i : i + batch_size]
             batch_nums = numbers[i : i + batch_size]
+            batch_no = i // batch_size + 1
             try:
                 vectors = _get_embeddings_api(batch_texts)
                 for num, vec in zip(batch_nums, vectors):
-                    self._index[num] = vec
+                    idx[num] = vec
+                # 每批成功即保存：中断或后续批次失败时，已构建部分不丢失
+                self._save_index()
                 logger.info(
-                    f"  embedding 批次 {i // batch_size + 1}: "
-                    f"{len(batch_texts)} 条"
+                    f"  批次 {batch_no}: {len(batch_texts)} 条成功"
+                    f"（累计 {len(idx)} 条）"
                 )
             except Exception as e:
-                logger.error(f"  embedding 批次失败: {e}")
+                logger.error(
+                    f"  批次 {batch_no} 失败（{len(batch_nums)} 条: "
+                    f"{', '.join(batch_nums)}）: {e}"
+                )
+                failed.extend(batch_nums)
+        return failed
 
-        self._save_index()
+    def _retry_failed(
+        self,
+        text_by_num: dict[str, str],
+        failed: list[str],
+        batch_size: int,
+        rounds: int = 1,
+    ) -> list[str]:
+        """对失败的 issue 在最后统一重试，返回重试后仍失败的编号列表。"""
+        for round_num in range(1, rounds + 1):
+            if not failed:
+                break
+            logger.info(f"最后重试第 {round_num} 轮: {len(failed)} 条失败项...")
+            texts = [text_by_num[n] for n in failed]
+            failed = self._embed_batches(texts, list(failed), batch_size)
+        return failed
+
+    def ensure_index(
+        self, issues: list[dict], batch_size: int = 10, retry_rounds: int = 1
+    ) -> dict:
+        """增量构建 embedding 索引：跳过已有向量的 issue，只计算新增部分。
+
+        失败批次会被记录并在最后重试；成功的批次即时落盘，
+        中断后重新运行只需补齐未完成部分。
+
+        Returns:
+            {"added": 新增条数, "skipped": 跳过条数, "failed": [失败编号]}
+        """
+        idx = self._load_index()
+        pending = [i for i in issues if str(i["number"]) not in idx]
+        skipped = len(issues) - len(pending)
+        if skipped:
+            logger.info(f"{skipped} 条 issue 已有 embedding，跳过")
+        if not pending:
+            return {"added": 0, "skipped": skipped, "failed": []}
+
+        texts = [
+            _build_issue_text(i, settings.include_comments) for i in pending
+        ]
+        numbers = [str(i["number"]) for i in pending]
+        text_by_num = dict(zip(numbers, texts))
+
+        logger.info(f"开始增量 embedding: {len(texts)} 条（批次大小 {batch_size}）")
+        failed = self._embed_batches(texts, numbers, batch_size)
+        failed = self._retry_failed(text_by_num, failed, batch_size, retry_rounds)
+
+        if failed:
+            logger.warning(
+                f"最终仍有 {len(failed)} 条失败: {failed}，"
+                f"重新运行构建命令即可自动补齐"
+            )
+        return {
+            "added": len(texts) - len(failed),
+            "skipped": skipped,
+            "failed": [int(n) for n in failed],
+        }
+
+    def rebuild_index(
+        self, issues: list[dict], batch_size: int = 10, retry_rounds: int = 1
+    ) -> dict:
+        """全量重建 embedding 索引（清空现有索引）。失败批次同样记录并重试。"""
+        self._index = {}
+        texts = [
+            _build_issue_text(i, settings.include_comments) for i in issues
+        ]
+        numbers = [str(i["number"]) for i in issues]
+        text_by_num = dict(zip(numbers, texts))
+
+        logger.info(f"开始全量重建 embedding 索引: {len(texts)} 条")
+        failed = self._embed_batches(texts, numbers, batch_size)
+        failed = self._retry_failed(text_by_num, failed, batch_size, retry_rounds)
+
         logger.info(f"embedding 索引重建完成: {len(self._index)} 条")
+        if failed:
+            logger.warning(f"最终仍有 {len(failed)} 条失败: {failed}")
+        return {
+            "added": len(texts) - len(failed),
+            "skipped": 0,
+            "failed": [int(n) for n in failed],
+        }
 
     def search(
         self,

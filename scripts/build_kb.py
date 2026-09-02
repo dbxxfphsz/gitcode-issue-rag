@@ -58,29 +58,44 @@ def build(fresh: bool = False, incremental: bool = False):
         ]
         logger.info(f"过滤忽略标签后: {len(raw_issues)} 条")
 
-    # 3. 标准化并保存
+    # 3. 标准化并保存（记录更新的 issue 编号，用于刷新其 embedding）
     issues_data = []
+    updated_numbers = []
     for raw in raw_issues:
         data = IssueData.from_gitcode(raw)
         if IssueData.validate(data):
+            if kb.get_issue(data["number"]) is not None:
+                updated_numbers.append(data["number"])
             issues_data.append(data)
 
     added, updated = kb.save_issues_batch(issues_data)
     logger.info(f"保存完成: 新增 {added}, 更新 {updated}")
 
+    # 内容更新的 issue 移除旧向量，后续会自动重算，避免用旧向量检索
+    for num in updated_numbers:
+        engine.remove_embedding(num)
+
     # 4. 更新游标
     from datetime import datetime, timezone
     kb.set_cursor(datetime.now(timezone.utc).isoformat())
 
-    # 5. 重建 embedding 索引
+    # 5. 增量构建 embedding 索引：
+    #    - 已有向量的 issue 直接跳过（成功部分不重复构建）
+    #    - 失败批次记录编号并在最后重试，重跑命令可自动补齐
     all_issues = kb.list_issues()
-    engine.rebuild_index(all_issues)
+    result = engine.ensure_index(all_issues)
 
     logger.info(
         f"===== 知识库构建完成 =====\n"
         f"  Issue 总数: {kb.issue_count()}\n"
-        f"  Embedding 索引: {engine.index_size()} 条"
+        f"  Embedding 索引: {engine.index_size()} 条\n"
+        f"  本次: 新增 {result['added']} 条，跳过 {result['skipped']} 条"
     )
+    if result["failed"]:
+        logger.warning(
+            f"  失败 {len(result['failed'])} 条: {result['failed']}\n"
+            f"  重新运行 python -m scripts.build_kb 可自动补齐"
+        )
 
 
 def main():
