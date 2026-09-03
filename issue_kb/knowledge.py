@@ -18,6 +18,18 @@ from loguru import logger
 from issue_kb.config import settings
 
 
+def _to_int(value):
+    """将 Issue 编号统一为 int，兼容历史数据中以字符串存储的编号。
+
+    相似性搜索引擎返回的编号为 int，而部分历史 JSON 文件将 number 存为
+    字符串，若不归一化会导致按编号查字典时匹配失败（报告详情显示为"未知"）。
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return value
+
+
 class IssueData:
     """标准化 Issue 数据结构。"""
 
@@ -26,7 +38,7 @@ class IssueData:
         """从 GitCode API 原始响应提取标准化字段。"""
         labels = [lb.get("name", "") for lb in raw.get("labels", [])]
         return {
-            "number": raw.get("number"),
+            "number": _to_int(raw.get("number")),
             "title": raw.get("title", ""),
             "body": raw.get("body", "") or "",
             "state": raw.get("state", "open"),
@@ -124,7 +136,9 @@ class KnowledgeBase:
         f = self._issue_file(number)
         if not f.exists():
             return None
-        return json.loads(f.read_text(encoding="utf-8"))
+        data = json.loads(f.read_text(encoding="utf-8"))
+        data["number"] = _to_int(data.get("number"))
+        return data
 
     def save_issue(self, data: dict):
         """保存或更新一条 issue。"""
@@ -152,6 +166,7 @@ class KnowledgeBase:
         issues = []
         for f in sorted(self.issues_dir.glob("*.json")):
             data = json.loads(f.read_text(encoding="utf-8"))
+            data["number"] = _to_int(data.get("number"))
             if state and data.get("state") != state:
                 continue
             issues.append(data)
