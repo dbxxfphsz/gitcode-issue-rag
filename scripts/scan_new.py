@@ -85,9 +85,9 @@ def scan_new(mode: str = "report"):
 
             # 执行相似性搜索
             results = engine.search(text, exclude_number=number)
-            kb_issues = {i["number"]: i for i in kb.list_issues()}
+            kb_issues = {str(i["number"]): i for i in kb.list_issues()}
             for r in results:
-                r["issue"] = kb_issues.get(r["number"], {})
+                r["issue"] = kb_issues.get(str(r["number"]), {})
 
             # 生成报告
             report = generate_scan_report(data, results, kb_issues)

@@ -23,8 +23,8 @@ from issue_kb.report import generate_scan_report
 from issue_kb.commenter import IssueCommenter
 
 
-def _parse_issue_ref(ref: str) -> int | None:
-    """从 Issue 编号或链接中提取编号。"""
+def _parse_issue_ref(ref: str) -> str | None:
+    """从 Issue 编号或链接中提取编号（支持数字和字母数字 ID）。"""
     ref = ref.strip()
     # 纯数字
     if ref.isdigit():
@@ -32,15 +32,19 @@ def _parse_issue_ref(ref: str) -> int | None:
     # #123 格式
     if ref.startswith("#") and ref[1:].isdigit():
         return int(ref[1:])
-    # URL 格式: .../issues/123
-    m = re.search(r"/issues/(\d+)", ref)
+    # URL 格式: .../issues/123 或 .../issues/I7S9F8
+    m = re.search(r"/issues/([\w-]+)", ref)
     if m:
-        return int(m.group(1))
+        val = m.group(1)
+        return int(val) if val.isdigit() else val
+    # 字母数字混合 ID（如 GitCode 的 I7S9F8）
+    if ref.isalnum() and not ref.isdigit():
+        return ref
     return None
 
 
 def scan(
-    issue_number: int | None = None,
+    issue_number: int | str | None = None,
     title: str | None = None,
     body: str = "",
     top_k: int | None = None,
@@ -53,8 +57,9 @@ def scan(
 
     # 获取目标 issue 数据
     if issue_number:
-        # 先尝试从知识库读取
-        target = kb.get_issue(issue_number)
+        # 先尝试从知识库读取（数字 ID 优先）
+        num_key = int(issue_number) if str(issue_number).isdigit() else issue_number
+        target = kb.get_issue(num_key) if str(num_key).isdigit() else None
         if not target:
             # 从 GitCode API 拉取
             logger.info(f"#{issue_number} 不在知识库中，从 GitCode 拉取...")
@@ -78,21 +83,34 @@ def scan(
         exclude_number=issue_number,
     )
 
-    # 补充 issue 详情
-    kb_issues = {i["number"]: i for i in kb.list_issues()}
+    # 补充 issue 详情（编号归一化为 str，兼容 int/str 混合存储）
+    kb_issues = {str(i["number"]): i for i in kb.list_issues()}
     for r in results:
-        r["issue"] = kb_issues.get(r["number"], {})
+        r["issue"] = kb_issues.get(str(r["number"]), {})
 
     # 生成报告
     report = generate_scan_report(target, results, kb_issues)
-    print(report)
 
     # 保存报告到文件
     report_dir = kb.kb_dir / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
     report_file = report_dir / f"scan_{issue_number or 'query'}.md"
     report_file.write_text(report, encoding="utf-8")
-    logger.info(f"报告已保存: {report_file}")
+
+    # 所有日志输出完毕后再打印报告，避免被日志淹没
+    above_threshold = [r for r in results if r["score"] >= settings.similarity_threshold]
+    logger.info(
+        f"===== 扫描摘要 =====\n"
+        f"  目标 Issue: #{target.get('number', '?')} {target.get('title', '')[:50]}\n"
+        f"  知识库条目: {len(kb_issues)}\n"
+        f"  返回结果: {len(results)} 条\n"
+        f"  高于阈值({settings.similarity_threshold:.0%}): {len(above_threshold)} 条\n"
+        f"  报告已保存: {report_file}"
+    )
+
+    # 报告输出在日志之后，用分隔线区分
+    print("\n" + "=" * 60)
+    print(report)
 
     # 如果需要评论模式
     if scan_mode == "comment" and issue_number:
@@ -129,7 +147,6 @@ def main():
         top_k=args.top_k,
         mode=args.mode,
     )
-
 
 if __name__ == "__main__":
     main()

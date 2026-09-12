@@ -54,9 +54,15 @@ def generate_scan_report(
     for i, item in enumerate(similar_issues, 1):
         num = item["number"]
         score = item["score"]
-        issue = item.get("issue") or kb.get(num, {})
+        # 编号归一化为 str 后再查字典，兼容 int/str 混合存储
+        issue = item.get("issue") or {}
+        if not issue:
+            for k in (num, str(num)):
+                issue = kb.get(k, {})
+                if issue:
+                    break
 
-        title = issue.get("title", "未知")
+        title = issue.get("title", "未知")[:100]
         state = issue.get("state", "未知")
         url = issue.get("url", "")
         labels = issue.get("labels", [])

@@ -74,7 +74,7 @@ class SimilarityEngine:
                 json.dumps(self._index), encoding="utf-8"
             )
 
-    def update_embedding(self, issue_number: int, text: str):
+    def update_embedding(self, issue_number: int | str, text: str):
         """为一条 issue 计算并缓存 embedding。"""
         idx = self._load_index()
         key = str(issue_number)
@@ -82,7 +82,7 @@ class SimilarityEngine:
         idx[key] = vectors[0]
         self._save_index()
 
-    def remove_embedding(self, issue_number: int):
+    def remove_embedding(self, issue_number: int | str):
         """移除一条 issue 的 embedding（内容更新后需重算时使用）。"""
         idx = self._load_index()
         if idx.pop(str(issue_number), None) is not None:
@@ -206,17 +206,17 @@ class SimilarityEngine:
         self,
         query_text: str,
         top_k: int | None = None,
-        exclude_number: int | None = None,
+        exclude_number: int | str | None = None,
     ) -> list[dict]:
         """搜索相似 issue。
 
         Args:
             query_text: 查询文本
             top_k: 返回条数
-            exclude_number: 排除的 issue 编号（避免自匹配）
+            exclude_number: 排除的 issue 编号（避免自匹配，支持 int/str）
 
         Returns:
-            [{"number": int, "score": float, "issue": dict}, ...]
+            [{"number": str, "score": float, "issue": dict}, ...]
         """
         k = top_k or settings.scan_top_k
         idx = self._load_index()
@@ -229,18 +229,20 @@ class SimilarityEngine:
         query_vec = _get_embeddings_api([query_text])[0]
         query_arr = np.array(query_vec)
 
+        # 统一 exclude_number 为 str，与 key 类型一致
+        exclude_key = str(exclude_number) if exclude_number is not None else None
+
         # 计算余弦相似度
         results = []
         for key, vec in idx.items():
-            num = int(key)
-            if exclude_number is not None and num == exclude_number:
+            if exclude_key is not None and key == exclude_key:
                 continue
             vec_arr = np.array(vec)
             score = float(
                 np.dot(query_arr, vec_arr)
                 / (np.linalg.norm(query_arr) * np.linalg.norm(vec_arr) + 1e-10)
             )
-            results.append({"number": num, "score": round(score, 4)})
+            results.append({"number": key, "score": round(score, 4)})
 
         # 按分数降序排序
         results.sort(key=lambda x: x["score"], reverse=True)
