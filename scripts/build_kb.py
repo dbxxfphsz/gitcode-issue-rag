@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from loguru import logger
 
-from issue_kb.config import settings
+from issue_kb.config import settings, apply_repo_override
 from issue_kb.gitcode_client import GitCodeClient
 from issue_kb.knowledge import KnowledgeBase, IssueData
 from issue_kb.similarity import SimilarityEngine
@@ -68,6 +68,12 @@ def build(fresh: bool = False, incremental: bool = False):
                 updated_numbers.append(data["number"])
             issues_data.append(data)
 
+    # 3.5 模板清洗预pass：频率预筛候选行 → LLM 语义判定 remove/keep → 写缓存。
+    #     每次扫描同步调用 LLM；随后 save_issue 按缓存清洗 body（仅查缓存、不再调 LLM）。
+    if settings.clean_template and issues_data:
+        logger.info("模板清洗：频率预筛候选行 + LLM 语义判定...")
+        kb.classifier.refresh(issues_data)
+
     added, updated = kb.save_issues_batch(issues_data)
     logger.info(f"保存完成: 新增 {added}, 更新 {updated}")
 
@@ -103,7 +109,9 @@ def main():
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--fresh", action="store_true", help="清空后全量重建")
     group.add_argument("--incremental", action="store_true", help="增量更新")
+    parser.add_argument("--repo", type=str, default=None, help="GitCode 仓库地址（owner/repo），默认使用 .env 配置")
     args = parser.parse_args()
+    apply_repo_override(args.repo)
     build(fresh=args.fresh, incremental=args.incremental)
 
 

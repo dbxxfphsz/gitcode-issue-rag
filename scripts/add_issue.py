@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from loguru import logger
 
-from issue_kb.config import settings
+from issue_kb.config import settings, apply_repo_override
 from issue_kb.gitcode_client import GitCodeClient
 from issue_kb.knowledge import KnowledgeBase, IssueData
 from issue_kb.similarity import SimilarityEngine, _build_issue_text
@@ -93,7 +93,9 @@ def main():
     parser.add_argument("--body", type=str, default="", help="正文（手动模式）")
     parser.add_argument("--labels", type=str, default="", help="标签，逗号分隔")
     parser.add_argument("--state", type=str, default="open", help="状态")
+    parser.add_argument("--repo", type=str, default=None, help="GitCode 仓库地址（owner/repo），默认使用 .env 配置")
     args = parser.parse_args()
+    apply_repo_override(args.repo)
 
     if args.manual:
         if not args.title:

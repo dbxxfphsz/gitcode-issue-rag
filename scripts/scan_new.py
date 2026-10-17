@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from datetime import datetime, timezone
 from loguru import logger
 
-from issue_kb.config import settings
+from issue_kb.config import settings, apply_repo_override
 from issue_kb.gitcode_client import GitCodeClient
 from issue_kb.knowledge import KnowledgeBase, IssueData
 from issue_kb.similarity import SimilarityEngine, _build_issue_text
@@ -140,7 +140,9 @@ def main():
     parser = argparse.ArgumentParser(description="定时扫描新 Issue")
     parser.add_argument("--mode", type=str, choices=["report", "comment"], default=None)
     parser.add_argument("--status", action="store_true", help="查看运行状态")
+    parser.add_argument("--repo", type=str, default=None, help="GitCode 仓库地址（owner/repo），默认使用 .env 配置")
     args = parser.parse_args()
+    apply_repo_override(args.repo)
 
     if args.status:
         show_status()

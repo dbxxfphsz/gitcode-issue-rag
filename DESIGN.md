@@ -9,7 +9,8 @@
 - GitCode Issue 自动评论（带防重复标记）
 - 知识库增量维护（游标追踪、断点续跑）
 - 定时检测新 Issue
-- 基于 Issue 数据生成 FAQ 文档（聚类合并、分类输出、草稿模式）
+- 录入前模板噪声清洗（LLM 语义判定剔除无意义模板文本，保留有助阅读的结构标题与用户内容）
+- 基于 Issue 数据生成 FAQ 文档（聚类合并、分类输出、草稿模式、中英双语分目录）
 
 Agent 通过自然语言指令识别意图，映射到对应的执行脚本，支持理解 Issue 编号、Issue 链接和"当前 Issue"等上下文，不依赖固定指令格式。
 
@@ -71,7 +72,7 @@ Agent / 用户（自然语言指令）
 | `GITCODE_TOKEN`                   | 空                     | GitCode Token，评论功能必需；通过环境变量配置，不入仓库 |
 | `GITCODE_REPO`                    | Ascend/msinsight       | 目标仓库                                                |
 | `KB_DIR`                          | ./issue-knowledge-base | 知识库目录，所有中间数据与索引均在此                    |
-| `FAQ_DIR`                         | ./docs/faq             | FAQ 输出目录                                            |
+| `FAQ_DIR`                         | ./docs/faq             | FAQ 输出目录（zh/ 中文、en/ 英文子目录）                |
 | `SIMILARITY_THRESHOLD`            | 0.75                   | 相似度阈值                                              |
 | `SCAN_TOP_K`                      | 5                      | 扫描返回数量                                            |
 | `SCAN_MODE`                       | report                 | 运行模式：`report` 仅生成报告 / `comment` 报告并评论    |
@@ -183,10 +184,10 @@ solution            # 自动提取的解决方案
 组内相似聚类（贪心：逐条用 embedding 搜索，相似度 ≥ 0.85 归入同簇）
     │ 避免同类问题重复生成多条 FAQ
     ▼
-渲染 Markdown（问题现象 / 适用版本 / 可能原因 / 解决方法 / 关联 Issue 链接）
+渲染 Markdown（问题现象 / 可能原因 / 解决方法 / 关联 Issue 链接；LLM 生成中英双语）
     │
     ▼
-写入 docs/faq/{分类}.md
+写入 docs/faq/zh/{分类}.md（中文）与 docs/faq/en/{分类}.md（英文）
 ```
 
 **关键特性**：
@@ -195,18 +196,53 @@ solution            # 自动提取的解决方案
 - 默认生成**待审核草稿**（文件名带 `_draft` 后缀），`--no-draft` 生成正式版
 - 支持三种模式：全量生成 / 增量更新（`--incremental`）/ 指定 Issue 生成（`--issue`）
 - Issue 解决方案变化后重新生成会覆盖同名文件，不产生重复条目
+- **中英双语分目录**：中文写入 `docs/faq/zh/`、英文写入 `docs/faq/en/`；英文由 LLM（`LLM_MODEL`）生成，每个聚类只调用一次 LLM，中英文渲染共用字段
+- **降级兜底**：未配置 LLM 或调用失败时回退纯中文模板并跳过英文文档，不产生半成品
+- **调试限流**：`--limit N` 仅处理前 N 条已解决 Issue（仅批量模式生效），降低 LLM 调用开销
+
+### 3.8 模板噪声清洗（template_classifier.py）
+
+GitCode 仓库的 Issue 普遍携带固定模板，其中既有**无意义噪声**（社区页脚客套话"欢迎加入社区…"、提交须知"提交提案之前…"、安全信息提醒等，与具体问题无关、抬高相似度基线），也有**有意义的结构骨架**（"### 🐛 问题描述""### 环境信息"等标题，有助于阅读 Issue）。纯频率统计无法区分二者——高频行既可能是噪声也可能是结构标题。
+
+**混合策略（频率预筛 + LLM 语义判定）**：
+
+```
+全库 Issue 的 body（body_raw 优先）
+    │ 按行 strip 规范化、每 Issue 内去重，统计文档频率
+    ▼
+频率预筛：出现在 >= min_support 条 Issue 的重复行 → 候选（只出现一次的独特内容直接保留、不送 LLM）
+    │ 仅缩小判定范围，不做 remove/keep 决策
+    ▼
+LLM 语义判定（chat_json，分批）：每行判 remove（无意义模板噪声）/ keep（结构标题、用户内容）+ 理由
+    │ 失败降级为保留，绝不误删
+    ▼
+llm_template_cache.json（{行: {verdict, reason}}，人可读可编辑）
+```
+
+**清洗（录入层 + 查询侧对称）**：
+
+- `build_kb`：拉取后先跑"分类预pass"（`classifier.refresh`）同步调用 LLM 判定候选行、写缓存；`save_issue` 录入时 `body_raw` 保留原文、`body` 存 `clean_body` 清洗后文本（仅查缓存、幂等）
+- `scan_issue`：查询侧对 target body 同样 `clean_body`，保证查询向量与知识库向量对称
+- `clean_body`：仅查缓存剔除 verdict=remove 的行、合并连续空行；不触发 LLM，无缓存时原样返回
+
+**存量处理（clean_templates.py）**：`--preview` 频率预筛 + LLM 判定 + 打印判定表（行/出现数/verdict/理由）供审计，不改 body；`--apply` 按缓存（可手改后）回填存量 body 并重算 embedding。
+
+**归档重建（kb_manage.py archive）**：把当前知识库整体移到 `archive/kb-legacy-<时间戳>/` 并重置为空，随后 `build_kb --fresh` 从 GitCode 全量重拉、重新判定清洗与 embedding。
+
+**取舍**：频率只用于把 LLM 判定量压到"重复行"级别（约十几次调用），remove/keep 全部由 LLM 语义决定，因此能保留 `### 🐛 问题描述` 这类高频但有益阅读的结构标题，同时剔除 `欢迎加入社区` 这类高频噪声——这是纯频率方案做不到的。缓存人可读可编辑，手改 verdict 后 `--apply` 即可重落地。
 
 ## 4. 脚本接口（执行层）
 
-| 脚本               | 功能             | 关键参数                                                                                |
-| ------------------ | ---------------- | --------------------------------------------------------------------------------------- |
-| `build_kb.py`      | 构建知识库       | `--fresh` 清空重建；`--incremental` 增量更新（默认全量）                                |
-| `scan_issue.py`    | 扫描指定 Issue   | `--issue` 编号/#编号/URL；`--title/--body` 手动输入；`--top-k`；`--mode report/comment` |
-| `add_issue.py`     | 添加 Issue       | `--issue` 从 GitCode 拉取；`--with-comments`；`--manual --title --body --labels`        |
-| `comment_issue.py` | 扫描并评论       | `--issue`（必填）；`--force` 忽略已有评论                                               |
-| `scan_new.py`      | 增量扫描新 Issue | `--mode report/comment`；`--status` 查看运行状态                                        |
-| `generate_faq.py`  | 生成 FAQ         | `--category`；`--issue`；`--incremental`；`--no-draft`                                  |
-| `kb_manage.py`     | 知识库管理       | `status` / `delete <编号>` / `reindex` / `rebuild`                                      |
+| 脚本                 | 功能             | 关键参数                                                                                |
+| -------------------- | ---------------- | --------------------------------------------------------------------------------------- |
+| `build_kb.py`        | 构建知识库       | `--fresh` 清空重建；`--incremental` 增量更新（默认全量）                                |
+| `scan_issue.py`      | 扫描指定 Issue   | `--issue` 编号/#编号/URL；`--title/--body` 手动输入；`--top-k`；`--mode report/comment` |
+| `add_issue.py`       | 添加 Issue       | `--issue` 从 GitCode 拉取；`--with-comments`；`--manual --title --body --labels`        |
+| `comment_issue.py`   | 扫描并评论       | `--issue`（必填）；`--force` 忽略已有评论                                               |
+| `scan_new.py`        | 增量扫描新 Issue | `--mode report/comment`；`--status` 查看运行状态                                        |
+| `generate_faq.py`    | 生成 FAQ         | `--category`；`--issue`；`--incremental`；`--no-draft`                                  |
+| `kb_manage.py`       | 知识库管理       | `status` / `delete <编号>` / `reindex` / `rebuild` / `archive`                          |
+| `clean_templates.py` | 模板噪声清洗     | `--preview` LLM 判定审计（不改 body）；`--apply` 回填清洗 + 重算 embedding              |
 
 所有脚本通过 `sys.path.insert` 保证从任意工作目录可正确导入 `issue_kb` 包。
 
@@ -216,11 +252,12 @@ solution            # 自动提取的解决方案
 
 ```
 issue-knowledge-base/
-├── issues/                  # 每条 Issue 一个 JSON 文件（标准化数据）
+├── issues/                  # 每条 Issue 一个 JSON（body=清洗后 / body_raw=原文）
 │   ├── 123.json
 │   └── 456.json
 ├── embeddings.json          # Embedding 索引：{issue_number: vector}
 ├── metadata.json            # 游标、已处理列表、统计、更新时间
+├── llm_template_cache.json  # LLM 模板行判定缓存：{行: {verdict, reason}}（人可读可编辑）
 └── reports/                 # 扫描报告
     └── scan_123.md
 
@@ -253,7 +290,9 @@ docs/faq/                    # FAQ 输出（草稿/正式版）
                                 ▼
         IssueData 标准化（含解决方案提取）
                                 ▼
-        批量保存（新增/更新区分）→ 更新游标；更新的 issue 移除旧向量
+        模板清洗预pass：频率预筛候选行 → LLM 判定 remove/keep → 写缓存
+                                        ▼
+                批量保存（body_raw=原文 / body=清洗后）→ 更新游标；更新的 issue 移除旧向量
                                 ▼
         增量构建 embedding 索引（跳过已索引，失败批次记录并在最后重试）
 ```
@@ -267,6 +306,8 @@ docs/faq/                    # FAQ 输出（草稿/正式版）
 解析 Issue 引用（编号 / #编号 / URL）
     ▼
 获取目标 Issue：优先本地知识库，未命中则从 GitCode 拉取
+    ▼
+查询侧对称清洗 body（按 LLM 判定缓存，与知识库向量对称）
     ▼
 构建查询文本 → 计算查询向量
     ▼
@@ -361,7 +402,9 @@ gitcode-issue-rag/
 │   ├── similarity.py            # Embedding + 余弦相似度
 │   ├── report.py                # Markdown 报告生成
 │   ├── commenter.py             # GitCode 评论管理
-│   └── faq.py                   # FAQ 文档生成
+│   ├── faq.py                   # FAQ 文档生成
+│   ├── llm.py                   # LLM 调用封装（chat completions）
+│   └── template_classifier.py   # 模板噪声 LLM 语义判定与清洗
 ├── scripts/                     # 可执行脚本
 │   ├── build_kb.py              # 构建知识库
 │   ├── scan_issue.py            # 扫描 Issue
@@ -369,7 +412,8 @@ gitcode-issue-rag/
 │   ├── comment_issue.py         # 评论 Issue
 │   ├── scan_new.py              # 增量扫描新 Issue
 │   ├── generate_faq.py          # 生成 FAQ
-│   └── kb_manage.py             # 知识库管理
+│   ├── kb_manage.py             # 知识库管理
+│   └── clean_templates.py       # 模板噪声清洗（LLM 判定/回填）
 ├── issue-knowledge-base/        # 知识库数据（运行后生成，不入 Git）
 ├── docs/faq/                    # FAQ 输出（运行后生成，不入 Git）
 ├── SKILL.md                     # Agent Skill 说明（触发条件与操作指南）

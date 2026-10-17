@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from loguru import logger
 
-from issue_kb.config import settings
+from issue_kb.config import settings, apply_repo_override
 from issue_kb.gitcode_client import GitCodeClient
 from issue_kb.knowledge import KnowledgeBase, IssueData
 from issue_kb.similarity import SimilarityEngine, _build_issue_text
@@ -72,6 +72,10 @@ def scan(
     else:
         logger.error("请指定 --issue 或 --title")
         return
+
+    # 查询侧对称清洗：保证 target 的 body 与知识库中已清洗的 body 一致（仅查缓存、幂等），
+    # 否则手动 --body 或未落库的新拉取 Issue 会拿含模板的文本比对干净库
+    target["body"] = kb.classifier.clean_body(target.get("body", "") or "")
 
     # 构建查询文本
     query_text = _build_issue_text(target, include_comments=settings.include_comments)
@@ -131,7 +135,9 @@ def main():
     parser.add_argument("--body", type=str, default="", help="Issue 正文")
     parser.add_argument("--top-k", type=int, default=None, help="返回条数")
     parser.add_argument("--mode", type=str, choices=["report", "comment"], help="运行模式")
+    parser.add_argument("--repo", type=str, default=None, help="GitCode 仓库地址（owner/repo），默认使用 .env 配置")
     args = parser.parse_args()
+    apply_repo_override(args.repo)
 
     issue_number = None
     if args.issue:

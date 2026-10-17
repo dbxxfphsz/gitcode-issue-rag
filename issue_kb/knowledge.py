@@ -16,6 +16,7 @@ from pathlib import Path
 from loguru import logger
 
 from issue_kb.config import settings
+from issue_kb.template_classifier import TemplateClassifier
 
 
 def _to_int(value):
@@ -85,6 +86,7 @@ class KnowledgeBase:
         self.issues_dir = self.kb_dir / "issues"
         self.meta_file = self.kb_dir / "metadata.json"
         self._ensure_dirs()
+        self.classifier = TemplateClassifier(self.kb_dir)
 
     def _ensure_dirs(self):
         self.issues_dir.mkdir(parents=True, exist_ok=True)
@@ -141,7 +143,12 @@ class KnowledgeBase:
         return data
 
     def save_issue(self, data: dict):
-        """保存或更新一条 issue。"""
+        """保存或更新一条 issue（录入层清洗模板噪声）。"""
+        # 模板清洗：body_raw 保留原文，body 存清洗后文本（仅查缓存、幂等，供 embedding 用）；
+        # 已含 body_raw 的数据（已清洗过）跳过，避免重复处理
+        if settings.clean_template and "body_raw" not in data:
+            data["body_raw"] = data.get("body", "") or ""
+            data["body"] = self.classifier.clean_body(data["body_raw"])
         number = data["number"]
         existing = self.get_issue(number)
         if existing:

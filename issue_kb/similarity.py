@@ -13,8 +13,17 @@ from loguru import logger
 from issue_kb.config import settings
 
 
+# text-embedding-v3 等模型对单条输入有 token 上限（dashscope 报错：
+# Range of input length should be [1, 8192]）。批量发送时，input 数组中
+# 只要有一条超限，整个批次会返回 400，连带同批的正常 Issue 一起失败。
+# 这里按字符数保守截断（中文约 1 字符≈1 token，6000 字符对 8192 上限留足余量），
+# 确保任何单条输入都不超限；截断长正文不影响主题级相似匹配。
+MAX_EMBEDDING_CHARS = 6000
+
+
 def _get_embeddings_api(texts: list[str]) -> list[list[float]]:
     """调用 OpenAI 兼容 API 获取 embedding 向量。"""
+    texts = [t[:MAX_EMBEDDING_CHARS] for t in texts]
     resp = httpx.post(
         f"{settings.openai_api_base}/embeddings",
         headers={
