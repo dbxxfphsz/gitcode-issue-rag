@@ -61,12 +61,18 @@ def build(fresh: bool = False, incremental: bool = False):
     # 3. 标准化并保存（记录更新的 issue 编号，用于刷新其 embedding）
     issues_data = []
     updated_numbers = []
-    for raw in raw_issues:
-        data = IssueData.from_gitcode(raw)
-        if IssueData.validate(data):
-            if kb.get_issue(data["number"]) is not None:
-                updated_numbers.append(data["number"])
-            issues_data.append(data)
+    with GitCodeClient() as client:
+        for raw in raw_issues:
+            comments = (
+                client.fetch_comments(raw.get("number", 0))
+                if settings.include_comments
+                else []
+            )
+            data = IssueData.from_gitcode(raw, comments)
+            if IssueData.validate(data):
+                if kb.get_issue(data["number"]) is not None:
+                    updated_numbers.append(data["number"])
+                issues_data.append(data)
 
     # 3.5 模板清洗预pass：频率预筛候选行 → LLM 语义判定 remove/keep → 写缓存。
     #     每次扫描同步调用 LLM；随后 save_issue 按缓存清洗 body（仅查缓存、不再调 LLM）。
