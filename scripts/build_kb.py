@@ -6,18 +6,16 @@
     python -m scripts.build_kb --incremental # 增量更新（只拉取新 issue）
 """
 
+from issue_kb.similarity import SimilarityEngine
+from issue_kb.knowledge import KnowledgeBase, IssueData
+from issue_kb.gitcode_client import GitCodeClient
+from issue_kb.config import settings, apply_repo_override
+from loguru import logger
 import argparse
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from loguru import logger
-
-from issue_kb.config import settings, apply_repo_override
-from issue_kb.gitcode_client import GitCodeClient
-from issue_kb.knowledge import KnowledgeBase, IssueData
-from issue_kb.similarity import SimilarityEngine
 
 
 def build(fresh: bool = False, incremental: bool = False):
@@ -115,7 +113,8 @@ def main():
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--fresh", action="store_true", help="清空后全量重建")
     group.add_argument("--incremental", action="store_true", help="增量更新")
-    parser.add_argument("--repo", type=str, default=None, help="GitCode 仓库地址（owner/repo），默认使用 .env 配置")
+    parser.add_argument("--repo", type=str, default=None,
+                        help="GitCode 仓库地址（owner/repo），默认使用 .env 配置")
     args = parser.parse_args()
     apply_repo_override(args.repo)
     build(fresh=args.fresh, incremental=args.incremental)
