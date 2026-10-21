@@ -92,6 +92,37 @@ class GitCodeClient:
             time.sleep(settings.crawl_delay)
         return comments
 
+    # ---- Issue 写入 ----
+
+    def create_issue(
+        self,
+        title: str,
+        body: str,
+        labels: list[str] | None = None,
+        state: str = "open",
+    ) -> dict:
+        """在仓库中创建 Issue。
+
+        Args:
+            title: Issue 标题
+            body: Issue 正文（Markdown）
+            labels: 标签列表
+            state: open / closed（GitCode v5 支持创建时指定状态）
+        """
+        payload: dict = {"title": title, "body": body}
+        if labels:
+            payload["labels"] = labels
+        if state == "closed":
+            payload["state"] = "closed"
+        resp = self._client.post(
+            f"{self.base}/repos/{self.repo}/issues",
+            json=payload,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        logger.info(f"已创建 Issue #{data.get('number')}: {title[:50]}")
+        return data
+
     # ---- 评论发布 ----
 
     def post_comment(self, issue_number: int, body: str) -> dict:
@@ -110,16 +141,30 @@ class GitCodeClient:
 
     # ---- 内部方法 ----
 
-    def _get(self, path: str, params: dict | None = None) -> list | dict:
-        """发起 GET 请求，处理错误。"""
+    def _get(
+        self, path: str, params: dict | None = None, max_retries: int = 3
+    ) -> list | dict:
+        """发起 GET 请求，处理错误。429 限流时自动退避重试。"""
         url = f"{self.base}{path}"
-        try:
-            resp = self._client.get(url, params=params or {})
-            resp.raise_for_status()
-            return resp.json()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP {e.response.status_code}: {url}")
-            raise
-        except httpx.HTTPError as e:
-            logger.error(f"请求失败: {e}")
-            raise
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = self._client.get(url, params=params or {})
+                if resp.status_code == 429:
+                    wait = min(2 ** attempt * 2, 30)  # 4s, 8s, 16s...
+                    logger.warning(
+                        f"429 限流，等待 {wait}s 后重试 ({attempt}/{max_retries}): {url}"
+                    )
+                    time.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                return resp.json()
+            except httpx.HTTPStatusError as e:
+                logger.error(f"HTTP {e.response.status_code}: {url}")
+                raise
+            except httpx.HTTPError as e:
+                logger.error(f"请求失败: {e}")
+                raise
+        # 重试耗尽仍成功，最后发一次让其正常抛出
+        resp = self._client.get(url, params=params or {})
+        resp.raise_for_status()
+        return resp.json()

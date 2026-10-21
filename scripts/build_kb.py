@@ -56,30 +56,33 @@ def build(fresh: bool = False, incremental: bool = False):
         ]
         logger.info(f"过滤忽略标签后: {len(raw_issues)} 条")
 
-    # 3. 标准化并保存（记录更新的 issue 编号，用于刷新其 embedding）
+    # 3. 标准化并逐条保存（不拉评论，FAQ 直接链接到原 Issue）
     issues_data = []
     updated_numbers = []
-    with GitCodeClient() as client:
-        for raw in raw_issues:
-            comments = (
-                client.fetch_comments(raw.get("number", 0))
-                if settings.include_comments
-                else []
-            )
-            data = IssueData.from_gitcode(raw, comments)
-            if IssueData.validate(data):
-                if kb.get_issue(data["number"]) is not None:
-                    updated_numbers.append(data["number"])
-                issues_data.append(data)
+    added = updated = 0
+    for i, raw in enumerate(raw_issues):
+        data = IssueData.from_gitcode(raw, comments=[])
+        if not IssueData.validate(data):
+            continue
+        if kb.get_issue(data["number"]) is not None:
+            updated_numbers.append(data["number"])
+            updated += 1
+        else:
+            added += 1
+        kb.save_issue(data)
+        issues_data.append(data)
+        if (i + 1) % 100 == 0:
+            logger.info(f"  已保存 {i + 1}/{len(raw_issues)} 条")
+    logger.info(f"保存完成: 新增 {added}, 更新 {updated}")
 
     # 3.5 模板清洗预pass：频率预筛候选行 → LLM 语义判定 remove/keep → 写缓存。
     #     每次扫描同步调用 LLM；随后 save_issue 按缓存清洗 body（仅查缓存、不再调 LLM）。
     if settings.clean_template and issues_data:
         logger.info("模板清洗：频率预筛候选行 + LLM 语义判定...")
         kb.classifier.refresh(issues_data)
-
-    added, updated = kb.save_issues_batch(issues_data)
-    logger.info(f"保存完成: 新增 {added}, 更新 {updated}")
+        # 清洗后重新保存（body 被更新为清洗后文本）
+        for data in issues_data:
+            kb.save_issue(data)
 
     # 内容更新的 issue 移除旧向量，后续会自动重算，避免用旧向量检索
     for num in updated_numbers:
